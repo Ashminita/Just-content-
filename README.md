@@ -298,3 +298,171 @@ Airport → Route (1:M)
 Route → Flight (1:M)
 Flight ↔ Crew (M:M via FlightCrew)
 Aircraft → Maintenance (1:M)
+
+Flight Service (Business Logic)
+📁 services/flight.service.js
+JavaScript
+Copy code
+const Flight = require("../models/Flight");
+const Aircraft = require("../models/Aircraft");
+const Route = require("../models/Route");
+
+// Create Flight
+exports.createFlight = async (data) => {
+  const { aircraft_id, route_id, departure_time } = data;
+
+  // 1. Check aircraft exists
+  const aircraft = await Aircraft.findByPk(aircraft_id);
+  if (!aircraft) {
+    throw new Error("Aircraft not found");
+  }
+
+  // 2. Prevent assigning aircraft under maintenance
+  if (aircraft.maintenance_status === "Under Maintenance") {
+    throw new Error("Aircraft is under maintenance");
+  }
+
+  // 3. Check route exists
+  const route = await Route.findByPk(route_id);
+  if (!route) {
+    throw new Error("Route not found");
+  }
+
+  // 4. Prevent same aircraft double booking at same time
+  const existingFlight = await Flight.findOne({
+    where: {
+      aircraft_id,
+      departure_time,
+    },
+  });
+
+  if (existingFlight) {
+    throw new Error("Aircraft already assigned to another flight at this time");
+  }
+
+  return await Flight.create(data);
+};
+
+// Get All Flights
+exports.getAllFlights = async () => {
+  return await Flight.findAll({
+    include: [
+      { model: Aircraft },
+      { model: Route },
+    ],
+  });
+};
+
+// Get Flight By ID
+exports.getFlightById = async (id) => {
+  const flight = await Flight.findByPk(id, {
+    include: [Aircraft, Route],
+  });
+
+  if (!flight) {
+    throw new Error("Flight not found");
+  }
+
+  return flight;
+};
+
+// Update Flight
+exports.updateFlight = async (id, data) => {
+  const flight = await Flight.findByPk(id);
+  if (!flight) {
+    throw new Error("Flight not found");
+  }
+
+  await flight.update(data);
+  return flight;
+};
+
+// Update Flight Status
+exports.updateFlightStatus = async (id, status) => {
+  const flight = await Flight.findByPk(id);
+  if (!flight) {
+    throw new Error("Flight not found");
+  }
+
+  await flight.update({ status });
+  return flight;
+};
+
+// Delete Flight
+exports.deleteFlight = async (id) => {
+  const flight = await Flight.findByPk(id);
+  if (!flight) {
+    throw new Error("Flight not found");
+  }
+
+  await flight.destroy();
+  return true;
+};
+✅ 2️⃣ Flight Controller
+📁 controllers/flight.controller.js
+JavaScript
+Copy code
+const flightService = require("../services/flight.service");
+
+// Create Flight
+exports.createFlight = async (req, res) => {
+  try {
+    const flight = await flightService.createFlight(req.body);
+    res.status(201).json(flight);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// Get All Flights
+exports.getAllFlights = async (req, res) => {
+  try {
+    const flights = await flightService.getAllFlights();
+    res.status(200).json(flights);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Get Flight By ID
+exports.getFlightById = async (req, res) => {
+  try {
+    const flight = await flightService.getFlightById(req.params.id);
+    res.status(200).json(flight);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+// Update Flight
+exports.updateFlight = async (req, res) => {
+  try {
+    const flight = await flightService.updateFlight(req.params.id, req.body);
+    res.status(200).json(flight);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+// Update Flight Status
+exports.updateFlightStatus = async (req, res) => {
+  try {
+    const flight = await flightService.updateFlightStatus(
+      req.params.id,
+      req.body.status
+    );
+    res.status(200).json(flight);
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
+
+// Delete Flight
+exports.deleteFlight = async (req, res) => {
+  try {
+    await flightService.deleteFlight(req.params.id);
+    res.status(200).json({ message: "Flight deleted successfully" });
+  } catch (error) {
+    res.status(404).json({ message: error.message });
+  }
+};
