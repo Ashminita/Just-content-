@@ -1,323 +1,255 @@
+import { Flight } from "../models/flight";
+import { FlightCrew } from "../models/flight-crew";
+import { Crew } from "../models/crew";
+import axios from "axios";
+import { publishEvent } from "../rabbitmq/publisher";
 
-const Route = sequelize.define("Route", {
-  route_id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true,
-  },
-  distance: {
-    type: DataTypes.FLOAT,
-  },
-});
+const AIRCRAFT_SERVICE = "http://localhost:3002/api/aircraft";
 
-Route.belongsTo(Airport, {
-  as: "departure_airport",
-  foreignKey: "departure_airport_code",
-});
+export const createFlightService = async (data:any) => {
 
-Route.belongsTo(Airport, {
-  as: "arrival_airport",
-  foreignKey: "arrival_airport_code",
-});
+    // Verify aircraft exists
+    const aircraft = await axios.get(`${AIRCRAFT_SERVICE}/${data.aircraft_id}`);
 
-module.exports = Route;
-4️⃣ Flight Model
-📁 models/Flight.js
-JavaScript
-Copy code
-const { DataTypes } = require("sequelize");
-const sequelize = require("./index");
-const Aircraft = require("./Aircraft");
-const Route = require("./Route");
+    if(!aircraft.data)
+        throw new Error("Aircraft not found");
 
-const Flight = sequelize.define("Flight", {
-  flight_id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true,
-  },
-  flight_number: {
-    type: DataTypes.STRING,
-    allowNull: false,
-  },
-  departure_date: {
-    type: DataTypes.DATEONLY,
-  },
-  departure_time: {
-    type: DataTypes.TIME,
-  },
-  arrival_time: {
-    type: DataTypes.TIME,
-  },
-  status: {
-    type: DataTypes.ENUM("Scheduled", "Delayed", "Cancelled", "Completed"),
-    defaultValue: "Scheduled",
-  },
-});
 
-Flight.belongsTo(Aircraft, {
-  foreignKey: "aircraft_id",
-});
+    const flight = await Flight.create(data);
 
-Flight.belongsTo(Route, {
-  foreignKey: "route_id",
-});
 
-module.exports = Flight;
-5️⃣ Crew Model
-📁 models/Crew.js
-JavaScript
-Copy code
-const { DataTypes } = require("sequelize");
-const sequelize = require("./index");
+    await publishEvent("flight.created",{
+        flightId:flight.id
+    })
 
-const Crew = sequelize.define("Crew", {
-  crew_id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true,
-  },
-  name: {
-    type: DataTypes.STRING,
-    allowNull: false,
-  },
-  role: {
-    type: DataTypes.ENUM("Pilot", "Co-Pilot", "Cabin Crew"),
-  },
-  contact: {
-    type: DataTypes.STRING,
-  },
-  license_number: {
-    type: DataTypes.STRING,
-  },
-});
-
-module.exports = Crew;
-6️⃣ FlightCrew (Junction Table)
-📁 models/FlightCrew.js
-JavaScript
-Copy code
-const sequelize = require("./index");
-const Flight = require("./Flight");
-const Crew = require("./Crew");
-
-const FlightCrew = sequelize.define("FlightCrew", {}, { timestamps: false });
-
-Flight.belongsToMany(Crew, {
-  through: FlightCrew,
-  foreignKey: "flight_id",
-});
-
-Crew.belongsToMany(Flight, {
-  through: FlightCrew,
-  foreignKey: "crew_id",
-});
-
-module.exports = FlightCrew;
-7️⃣ Maintenance Model
-📁 models/Maintenance.js
-JavaScript
-Copy code
-const { DataTypes } = require("sequelize");
-const sequelize = require("./index");
-const Aircraft = require("./Aircraft");
-
-const Maintenance = sequelize.define("Maintenance", {
-  maintenance_id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true,
-  },
-  maintenance_date: {
-    type: DataTypes.DATEONLY,
-  },
-  maintenance_type: {
-    type: DataTypes.STRING,
-  },
-  status: {
-    type: DataTypes.STRING,
-  },
-  technician_name: {
-    type: DataTypes.STRING,
-  },
-});
-
-Maintenance.belongsTo(Aircraft, {
-  foreignKey: "aircraft_id",
-});
-
-module.exports = Maintenance;
-🔗 Final Relationships (Clear Understanding)
-Aircraft → Flight (1:M)
-Airport → Route (1:M)
-Route → Flight (1:M)
-Flight ↔ Crew (M:M via FlightCrew)
-Aircraft → Maintenance (1:M)
-
-Flight Service (Business Logic)
-📁 services/flight.service.js
-JavaScript
-Copy code
-const Flight = require("../models/Flight");
-const Aircraft = require("../models/Aircraft");
-const Route = require("../models/Route");
-
-// Create Flight
-exports.createFlight = async (data) => {
-  const { aircraft_id, route_id, departure_time } = data;
-
-  // 1. Check aircraft exists
-  const aircraft = await Aircraft.findByPk(aircraft_id);
-  if (!aircraft) {
-    throw new Error("Aircraft not found");
-  }
-
-  // 2. Prevent assigning aircraft under maintenance
-  if (aircraft.maintenance_status === "Under Maintenance") {
-    throw new Error("Aircraft is under maintenance");
-  }
-
-  // 3. Check route exists
-  const route = await Route.findByPk(route_id);
-  if (!route) {
-    throw new Error("Route not found");
-  }
-
-  // 4. Prevent same aircraft double booking at same time
-  const existingFlight = await Flight.findOne({
-    where: {
-      aircraft_id,
-      departure_time,
-    },
-  });
-
-  if (existingFlight) {
-    throw new Error("Aircraft already assigned to another flight at this time");
-  }
-
-  return await Flight.create(data);
+    return flight;
 };
 
-// Get All Flights
-exports.getAllFlights = async () => {
-  return await Flight.findAll({
-    include: [
-      { model: Aircraft },
-      { model: Route },
-    ],
-  });
+
+
+export const getFlightsService = async () => {
+
+    return Flight.findAll();
+
 };
 
-// Get Flight By ID
-exports.getFlightById = async (id) => {
-  const flight = await Flight.findByPk(id, {
-    include: [Aircraft, Route],
-  });
 
-  if (!flight) {
-    throw new Error("Flight not found");
-  }
+export const getFlightByIdService = async(id:string)=>{
 
-  return flight;
+    return Flight.findByPk(id);
+
 };
 
-// Update Flight
-exports.updateFlight = async (id, data) => {
-  const flight = await Flight.findByPk(id);
-  if (!flight) {
-    throw new Error("Flight not found");
-  }
 
-  await flight.update(data);
-  return flight;
+
+export const updateFlightStatusService = async(
+    id:string,
+    status:string,
+    delay_reason?:string,
+    delay_minutes?:number
+)=>{
+
+
+    const flight = await Flight.findByPk(id);
+
+    if(!flight)
+        throw new Error("Flight not found");
+
+
+    await flight.update({
+        status,
+        delay_reason,
+        delay_minutes
+    })
+
+
+    await publishEvent("flight.status.updated",{
+        flightId:id,
+        status
+    })
+
+
+    return flight;
 };
 
-// Update Flight Status
-exports.updateFlightStatus = async (id, status) => {
-  const flight = await Flight.findByPk(id);
-  if (!flight) {
-    throw new Error("Flight not found");
-  }
 
-  await flight.update({ status });
-  return flight;
+
+export const assignCrewService = async(
+    flight_id:string,
+    crew_id:string
+)=>{
+
+
+    const flight = await Flight.findByPk(flight_id);
+
+    if(!flight)
+        throw new Error("Flight not found");
+
+
+    const crew = await Crew.findByPk(crew_id);
+
+    if(!crew)
+        throw new Error("Crew not found");
+
+
+    return FlightCrew.create({
+        flight_id,
+        crew_id
+    });
+
+};
+import { Request,Response } from "express";
+import * as service from "../services/flight-service";
+
+
+
+export const createFlight = async(
+    req:Request,
+    res:Response
+)=>{
+
+    try{
+
+        const flight = await service.createFlightService(
+            req.body
+        )
+
+        res.status(201).json(flight)
+
+    }
+    catch(err:any){
+
+        res.status(500).json({
+            message:err.message
+        })
+
+    }
+
 };
 
-// Delete Flight
-exports.deleteFlight = async (id) => {
-  const flight = await Flight.findByPk(id);
-  if (!flight) {
-    throw new Error("Flight not found");
-  }
 
-  await flight.destroy();
-  return true;
-};
-✅ 2️⃣ Flight Controller
-📁 controllers/flight.controller.js
-JavaScript
-Copy code
-const flightService = require("../services/flight.service");
 
-// Create Flight
-exports.createFlight = async (req, res) => {
-  try {
-    const flight = await flightService.createFlight(req.body);
-    res.status(201).json(flight);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
+export const getFlights = async(
+    req:Request,
+    res:Response
+)=>{
+
+
+    const flights = await service.getFlightsService();
+
+    res.json(flights)
+
 };
 
-// Get All Flights
-exports.getAllFlights = async (req, res) => {
-  try {
-    const flights = await flightService.getAllFlights();
-    res.status(200).json(flights);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+
+
+export const getFlightById = async(
+    req:Request,
+    res:Response
+)=>{
+
+    const flight = await service.getFlightByIdService(
+        req.params.id
+    )
+
+    res.json(flight)
+
 };
 
-// Get Flight By ID
-exports.getFlightById = async (req, res) => {
-  try {
-    const flight = await flightService.getFlightById(req.params.id);
-    res.status(200).json(flight);
-  } catch (error) {
-    res.status(404).json({ message: error.message });
-  }
+
+
+export const updateFlightStatus = async(
+    req:Request,
+    res:Response
+)=>{
+
+
+    const flight = await service.updateFlightStatusService(
+        req.params.id,
+        req.body.status,
+        req.body.delay_reason,
+        req.body.delay_minutes
+    )
+
+    res.json(flight)
+
 };
 
-// Update Flight
-exports.updateFlight = async (req, res) => {
-  try {
-    const flight = await flightService.updateFlight(req.params.id, req.body);
-    res.status(200).json(flight);
-  } catch (error) {
-    res.status(404).json({ message: error.message });
-  }
+
+
+export const assignCrew = async(
+    req:Request,
+    res:Response
+)=>{
+
+
+    const record = await service.assignCrewService(
+        req.body.flight_id,
+        req.body.crew_id
+    )
+
+    res.json(record)
+
+};
+import express from "express";
+import * as controller from "../controllers/flight-controller";
+
+const router = express.Router();
+
+
+
+router.post(
+    "/",
+    controller.createFlight
+);
+
+
+router.get(
+    "/",
+    controller.getFlights
+);
+
+
+router.get(
+    "/:id",
+    controller.getFlightById
+);
+
+
+router.patch(
+    "/:id/status",
+    controller.updateFlightStatus
+);
+
+
+router.post(
+    "/assign-crew",
+    controller.assignCrew
+);
+
+
+
+export default router;
+
+import { Crew } from "../models/crew";
+
+export const createCrewService = async (data:any) => {
+  return await Crew.create(data);
 };
 
-// Update Flight Status
-exports.updateFlightStatus = async (req, res) => {
-  try {
-    const flight = await flightService.updateFlightStatus(
-      req.params.id,
-      req.body.status
-    );
-    res.status(200).json(flight);
-  } catch (error) {
-    res.status(404).json({ message: error.message });
-  }
+export const getAllCrewService = async () => {
+  return await Crew.findAll();
 };
 
-// Delete Flight
-exports.deleteFlight = async (req, res) => {
-  try {
-    await flightService.deleteFlight(req.params.id);
-    res.status(200).json({ message: "Flight deleted successfully" });
-  } catch (error) {
-    res.status(404).json({ message: error.message });
-  }
+export const getCrewByIdService = async (id:string) => {
+  return await Crew.findByPk(id);
+};
+
+export const updateCrewService = async (id:string,data:any) => {
+  await Crew.update(data,{where:{id}});
+  return await Crew.findByPk(id);
+};
+
+export const deleteCrewService = async (id:string) => {
+  return await Crew.destroy({where:{id}});
 };
