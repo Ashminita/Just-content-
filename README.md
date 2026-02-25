@@ -253,3 +253,173 @@ export const updateCrewService = async (id:string,data:any) => {
 export const deleteCrewService = async (id:string) => {
   return await Crew.destroy({where:{id}});
 };
+[25/02, 13:58] Ashminita: import Flight from "../models/flight";
+
+export const assignAircraftService = async (
+ flightId: string,
+ aircraftId: string
+) => {
+
+ const flight = await Flight.findByPk(flightId);
+
+ if (!flight) {
+  throw new Error("Flight not found");
+ }
+
+ await flight.update({
+  aircraft_id: aircraftId
+ });
+
+ return flight;
+
+};
+[25/02, 13:59] Ashminita: export const assignAircraft = async (
+ req: Request,
+ res: Response
+) => {
+
+ try {
+
+  const { flight_id, aircraft_id } = req.body;
+
+  const flight =
+   await service.assignAircraftService(
+    flight_id,
+    aircraft_id
+   );
+
+  res.json(flight);
+
+ } catch (err:any) {
+
+  res.status(500).json({
+   message: err.message
+  });
+
+ }
+
+};
+[25/02, 13:59] Ashminita: import { Router } from "express";
+import * as controller from "../controllers/flight-controller";
+
+import { verifyToken } from "../middlewares/auth-middleware";
+import { allowRoles } from "../middlewares/rbac-middleware";
+
+const router = Router();
+
+
+router.post(
+ "/flights",
+ verifyToken,
+ allowRoles("Manager","Operations"),
+ controller.createFlight
+);
+
+
+router.get(
+ "/flights",
+ verifyToken,
+ allowRoles("Manager","Operations","Analyst"),
+ controller.getFlights
+);
+
+
+router.get(
+ "/flights/:id",
+ verifyToken,
+ allowRoles("Manager","Operations","Analyst"),
+ controller.getFlightById
+);
+
+
+router.patch(
+ "/flights/:id/status",
+ verifyToken,
+ allowRoles("Operations"),
+ controller.updateFlightStatus
+);
+
+
+router.post(
+ "/flights/assign-aircraft",
+ verifyToken,
+ allowRoles("Manager","Operations"),
+ controller.assignAircraft
+);
+
+
+router.post(
+ "/flights/assign-crew",
+ verifyToken,
+ allowRoles("Manager"),
+ controller.assignCrew
+);
+
+
+export default router;
+[25/02, 13:59] Ashminita: import { Router } from "express";
+
+import {
+ createAircraft,
+ getAircraft,
+ getAircraftById,
+ updateAircraft,
+ deleteAircraft,
+ addMaintenance
+} from "../controllers/aircraft-controller";
+
+import { verifyToken } from "../middlewares/auth-middleware";
+import { allowRoles } from "../middlewares/rbac-middleware";
+
+const router = Router();
+
+
+router.post(
+ "/aircraft",
+ verifyToken,
+ allowRoles("Manager"),
+ createAircraft
+);
+
+
+router.get(
+ "/aircraft",
+ verifyToken,
+ allowRoles("Manager","Operations","Analyst"),
+ getAircraft
+);
+
+
+router.get(
+ "/aircraft/:id",
+ verifyToken,
+ allowRoles("Manager","Operations","Analyst"),
+ getAircraftById
+);
+
+
+router.put(
+ "/aircraft/:id",
+ verifyToken,
+ allowRoles("Manager"),
+ updateAircraft
+);
+
+
+router.delete(
+ "/aircraft/:id",
+ verifyToken,
+ allowRoles("Manager"),
+ deleteAircraft
+);
+
+
+router.post(
+ "/aircraft/:id/maintenance",
+ verifyToken,
+ allowRoles("Operations"),
+ addMaintenance
+);
+
+
+export default router;
