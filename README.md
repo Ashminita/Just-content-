@@ -1,425 +1,445 @@
-import { Flight } from "../models/flight";
-import { FlightCrew } from "../models/flight-crew";
-import { Crew } from "../models/crew";
-import axios from "axios";
-import { publishEvent } from "../rabbitmq/publisher";
+<table>
 
-const AIRCRAFT_SERVICE = "http://localhost:3002/api/aircraft";
+<tr>
+<th>Flight</th>
+<th>Route</th>
+<th>Status</th>
+<th>Aircraft</th>
+</tr>
 
-export const createFlightService = async (data:any) => {
+{flights.map(f=>(
+<tr key={f.id}>
 
-    // Verify aircraft exists
-    const aircraft = await axios.get(`${AIRCRAFT_SERVICE}/${data.aircraft_id}`);
+<td>{f.flight_number}</td>
 
-    if(!aircraft.data)
-        throw new Error("Aircraft not found");
+<td>
+{f.departure_airport} → {f.arrival_airport}
+</td>
 
+<td>{f.status}</td>
 
-    const flight = await Flight.create(data);
+<td>
+{f.Aircraft?.registration_number}
+</td>
 
+</tr>
+))}
 
-    await publishEvent("flight.created",{
-        flightId:flight.id
-    })
+</table>
+useEffect(()=>{
 
-    return flight;
-};
+fetch("http://localhost:3001/api/dashboard",{
 
+credentials:"include"
 
+})
+.then(res=>res.json())
+.then(setFlights)
 
-export const getFlightsService = async () => {
+},[])
 
-    return Flight.findAll();
+[
+{
+"id":"f123",
 
-};
+"flight_number":"AI101",
 
+"departure_airport":"DEL",
 
-export const getFlightByIdService = async(id:string)=>{
+"arrival_airport":"BOM",
 
-    return Flight.findByPk(id);
+"status":"Delayed",
 
-};
+"Aircraft":{
+"registration_number":"VT123",
+"model":"A320"
+}
+}
+]
 
+Flight.belongsTo(Aircraft,{
+ foreignKey:"aircraft_id"
+});
 
-
-export const updateFlightStatusService = async(
-    id:string,
-    status:string,
-    delay_reason?:string,
-    delay_minutes?:number
-)=>{
-
-
-    const flight = await Flight.findByPk(id);
-
-    if(!flight)
-        throw new Error("Flight not found");
-
-
-    await flight.update({
-        status,
-        delay_reason,
-        delay_minutes
-    })
-
-
-    await publishEvent("flight.status.updated",{
-        flightId:id,
-        status
-    })
-
-
-    return flight;
-};
-
-
-
-export const assignCrewService = async(
-    flight_id:string,
-    crew_id:string
-)=>{
-
-
-    const flight = await Flight.findByPk(flight_id);
-
-    if(!flight)
-        throw new Error("Flight not found");
-
-
-    const crew = await Crew.findByPk(crew_id);
-
-    if(!crew)
-        throw new Error("Crew not found");
-
-
-    return FlightCrew.create({
-        flight_id,
-        crew_id
-    });
-
-};
-import { Request,Response } from "express";
-import * as service from "../services/flight-service";
-
-
-
-export const createFlight = async(
-    req:Request,
-    res:Response
-)=>{
-
-    try{
-
-        const flight = await service.createFlightService(
-            req.body
-        )
-
-        res.status(201).json(flight)
-
-    }
-    catch(err:any){
-
-        res.status(500).json({
-            message:err.message
-        })
-
-    }
-
-};
-
-
-
-export const getFlights = async(
-    req:Request,
-    res:Response
-)=>{
-
-
-    const flights = await service.getFlightsService();
-
-    res.json(flights)
-
-};
-
-
-
-export const getFlightById = async(
-    req:Request,
-    res:Response
-)=>{
-
-    const flight = await service.getFlightByIdService(
-        req.params.id
-    )
-
-    res.json(flight)
-
-};
-
-
-
-export const updateFlightStatus = async(
-    req:Request,
-    res:Response
-)=>{
-
-
-    const flight = await service.updateFlightStatusService(
-        req.params.id,
-        req.body.status,
-        req.body.delay_reason,
-        req.body.delay_minutes
-    )
-
-    res.json(flight)
-
-};
-
-
-
-export const assignCrew = async(
-    req:Request,
-    res:Response
-)=>{
-
-
-    const record = await service.assignCrewService(
-        req.body.flight_id,
-        req.body.crew_id
-    )
-
-    res.json(record)
-
-};
-import express from "express";
-import * as controller from "../controllers/flight-controller";
-
-const router = express.Router();
-
-
-
-router.post(
-    "/",
-    controller.createFlight
-);
-
-
-router.get(
-    "/",
-    controller.getFlights
-);
-
-
-router.get(
-    "/:id",
-    controller.getFlightById
-);
-
-
-router.patch(
-    "/:id/status",
-    controller.updateFlightStatus
-);
-
-
-router.post(
-    "/assign-crew",
-    controller.assignCrew
-);
-
-
-
-export default router;
-
-import { Crew } from "../models/crew";
-
-export const createCrewService = async (data:any) => {
-  return await Crew.create(data);
-};
-
-export const getAllCrewService = async () => {
-  return await Crew.findAll();
-};
-
-export const getCrewByIdService = async (id:string) => {
-  return await Crew.findByPk(id);
-};
-
-export const updateCrewService = async (id:string,data:any) => {
-  await Crew.update(data,{where:{id}});
-  return await Crew.findByPk(id);
-};
-
-export const deleteCrewService = async (id:string) => {
-  return await Crew.destroy({where:{id}});
-};
-[25/02, 13:58] Ashminita: import Flight from "../models/flight";
-
-export const assignAircraftService = async (
- flightId: string,
- aircraftId: string
-) => {
-
- const flight = await Flight.findByPk(flightId);
-
- if (!flight) {
-  throw new Error("Flight not found");
- }
-
- await flight.update({
-  aircraft_id: aircraftId
- });
-
- return flight;
-
-};
-[25/02, 13:59] Ashminita: export const assignAircraft = async (
- req: Request,
- res: Response
-) => {
-
- try {
-
-  const { flight_id, aircraft_id } = req.body;
-
-  const flight =
-   await service.assignAircraftService(
-    flight_id,
-    aircraft_id
-   );
-
-  res.json(flight);
-
- } catch (err:any) {
-
-  res.status(500).json({
-   message: err.message
-  });
-
- }
-
-};
-[25/02, 13:59] Ashminita: import { Router } from "express";
-import * as controller from "../controllers/flight-controller";
-
-import { verifyToken } from "../middlewares/auth-middleware";
-import { allowRoles } from "../middlewares/rbac-middleware";
-
-const router = Router();
-
-
-router.post(
- "/flights",
- verifyToken,
- allowRoles("Manager","Operations"),
- controller.createFlight
-);
-
-
-router.get(
- "/flights",
- verifyToken,
- allowRoles("Manager","Operations","Analyst"),
- controller.getFlights
-);
-
-
-router.get(
- "/flights/:id",
- verifyToken,
- allowRoles("Manager","Operations","Analyst"),
- controller.getFlightById
-);
-
-
-router.patch(
- "/flights/:id/status",
- verifyToken,
- allowRoles("Operations"),
- controller.updateFlightStatus
-);
-
-
-router.post(
- "/flights/assign-aircraft",
- verifyToken,
- allowRoles("Manager","Operations"),
- controller.assignAircraft
-);
-
-
-router.post(
- "/flights/assign-crew",
- verifyToken,
- allowRoles("Manager"),
- controller.assignCrew
-);
-
-
-export default router;
-[25/02, 13:59] Ashminita: import { Router } from "express";
+Aircraft.hasMany(Flight,{
+ foreignKey:"aircraft_id"
+});
 
 import {
- createAircraft,
- getAircraft,
- getAircraftById,
- updateAircraft,
- deleteAircraft,
- addMaintenance
-} from "../controllers/aircraft-controller";
+Flight,
+Aircraft
+} from "@repo/shared-database";
 
-import { verifyToken } from "../middlewares/auth-middleware";
-import { allowRoles } from "../middlewares/rbac-middleware";
+
+export const getDashboard = async()=>{
+
+ const flights = await Flight.findAll({
+
+ include:[
+ {
+ model:Aircraft,
+ attributes:["registration_number","model"]
+ }
+ ],
+
+ order:[
+ ["departure_date","DESC"]
+ ]
+
+ });
+
+ return flights;
+
+};
+
+import { Request,Response,NextFunction } from "express";
+import * as dashboardService from "../services/dashboard-service";
+
+
+export const getDashboard = async(
+ req:Request,
+ res:Response,
+ next:NextFunction
+)=>{
+
+ try{
+
+ const data = await dashboardService.getDashboard();
+
+ res.json(data);
+
+ }
+ catch(err){
+
+ next(err);
+
+ }
+
+};
+
+import { Router } from "express";
+import { getDashboard } from "../controllers/dashboard-controller";
+
+import { authenticate } from "@repo/shared-utils/authMiddleware";
+import { authorize } from "@repo/shared-utils/rbacMiddleware";
+
+const router = Router();
+
+router.get(
+"/",
+authenticate,
+authorize("Manager","Operations"),
+getDashboard
+);
+
+export default router;
+
+import {
+FlightEvent,
+Flight
+} from "@repo/shared-database";
+
+
+export const createEvent = async(data:any)=>{
+
+ const flight = await Flight.findByPk(data.flight_id);
+
+ if(!flight)
+ throw new Error("Flight not found");
+
+
+ return FlightEvent.create(data);
+
+};
+
+
+
+export const getEvents = async(flightId:string)=>{
+
+ return FlightEvent.findAll({
+
+ where:{
+ flight_id:flightId
+ }
+
+ });
+
+};
+
+import { Request,Response,NextFunction } from "express";
+import * as eventService from "../services/flight-event-service";
+
+
+export const createEvent = async(
+ req:Request,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ const event = await eventService.createEvent(req.body);
+
+ res.status(201).json(event);
+
+ }catch(err){
+ next(err);
+ }
+};
+
+
+
+export const getFlightEvents = async(
+ req:Request,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ const events = await eventService.getEvents(
+ req.params.flightId
+ );
+
+ res.json(events);
+
+ }catch(err){
+ next(err);
+ }
+};
+
+import { Router } from "express";
+
+import {
+createEvent,
+getFlightEvents
+} from "../controllers/flight-event-controller";
+
+import { authenticate } from "@repo/shared-utils/authMiddleware";
+import { authorize } from "@repo/shared-utils/rbacMiddleware";
+
 
 const router = Router();
 
 
 router.post(
- "/aircraft",
- verifyToken,
- allowRoles("Manager"),
- createAircraft
+"/",
+authenticate,
+authorize("Operations"),
+createEvent
 );
 
 
 router.get(
- "/aircraft",
- verifyToken,
- allowRoles("Manager","Operations","Analyst"),
- getAircraft
-);
-
-
-router.get(
- "/aircraft/:id",
- verifyToken,
- allowRoles("Manager","Operations","Analyst"),
- getAircraftById
-);
-
-
-router.put(
- "/aircraft/:id",
- verifyToken,
- allowRoles("Manager"),
- updateAircraft
-);
-
-
-router.delete(
- "/aircraft/:id",
- verifyToken,
- allowRoles("Manager"),
- deleteAircraft
-);
-
-
-router.post(
- "/aircraft/:id/maintenance",
- verifyToken,
- allowRoles("Operations"),
- addMaintenance
+"/:flightId",
+authenticate,
+authorize("Manager","Operations"),
+getFlightEvents
 );
 
 
 export default router;
+
+import { Crew } from "@repo/shared-database";
+
+
+export const createCrew = async(data:any)=>{
+
+ return Crew.create(data);
+
+};
+
+
+export const getCrews = async()=>{
+
+ return Crew.findAll();
+
+};
+
+
+export const getCrewById = async(id:string)=>{
+
+ const crew = await Crew.findByPk(id);
+
+ if(!crew)
+ throw new Error("Crew not found");
+
+ return crew;
+
+};
+
+
+export const updateCrew = async(id:string,data:any)=>{
+
+ const crew = await Crew.findByPk(id);
+
+ if(!crew)
+ throw new Error("Crew not found");
+
+ return crew.update(data);
+
+};
+
+
+export const deleteCrew = async(id:string)=>{
+
+ const crew = await Crew.findByPk(id);
+
+ if(!crew)
+ throw new Error("Crew not found");
+
+ await crew.destroy();
+
+};
+
+import { Request,Response,NextFunction } from "express";
+import * as crewService from "../services/crew-service";
+
+interface IdParams{
+ id:string
+}
+
+
+export const createCrew = async(
+ req:Request,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ const crew = await crewService.createCrew(req.body);
+
+ res.status(201).json(crew);
+
+ }catch(err){
+ next(err);
+ }
+};
+
+
+
+export const getCrews = async(
+ req:Request,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ const crews = await crewService.getCrews();
+
+ res.json(crews);
+
+ }catch(err){
+ next(err);
+ }
+};
+
+
+
+export const getCrewById = async(
+ req:Request<IdParams>,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ const crew = await crewService.getCrewById(req.params.id);
+
+ res.json(crew);
+
+ }catch(err){
+ next(err);
+ }
+};
+
+
+
+export const updateCrew = async(
+ req:Request<IdParams>,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ const crew = await crewService.updateCrew(
+ req.params.id,
+ req.body
+ );
+
+ res.json(crew);
+
+ }catch(err){
+ next(err);
+ }
+};
+
+
+
+export const deleteCrew = async(
+ req:Request<IdParams>,
+ res:Response,
+ next:NextFunction
+)=>{
+ try{
+
+ await crewService.deleteCrew(req.params.id);
+
+ res.json({
+ message:"Crew deleted"
+ });
+
+ }catch(err){
+ next(err);
+ }
+};
+
+import { Router } from "express";
+import {
+createCrew,
+getCrews,
+getCrewById,
+updateCrew,
+deleteCrew
+} from "../controllers/crew-controller";
+
+import { authenticate } from "@repo/shared-utils/authMiddleware";
+import { authorize } from "@repo/shared-utils/rbacMiddleware";
+
+const router = Router();
+
+router.post(
+"/",
+authenticate,
+authorize("Operations"),
+createCrew
+);
+
+router.get(
+"/",
+authenticate,
+authorize("Manager","Operations"),
+getCrews
+);
+
+router.get(
+"/:id",
+authenticate,
+authorize("Manager","Operations"),
+getCrewById
+);
+
+router.put(
+"/:id",
+authenticate,
+authorize("Operations"),
+updateCrew
+);
+
+router.delete(
+"/:id",
+authenticate,
+authorize("Manager"),
+deleteCrew
+);
+
+export default router;
+
+❤️😊
