@@ -1,110 +1,6 @@
-<table>
-
-<tr>
-<th>Flight</th>
-<th>Route</th>
-<th>Status</th>
-<th>Aircraft</th>
-</tr>
-
-{flights.map(f=>(
-<tr key={f.id}>
-
-<td>{f.flight_number}</td>
-
-<td>
-{f.departure_airport} → {f.arrival_airport}
-</td>
-
-<td>{f.status}</td>
-
-<td>
-{f.Aircraft?.registration_number}
-</td>
-
-</tr>
-))}
-
-</table>
-useEffect(()=>{
-
-fetch("http://localhost:3001/api/dashboard",{
-
-credentials:"include"
-
-})
-.then(res=>res.json())
-.then(setFlights)
-
-},[])
-
-[
-{
-"id":"f123",
-
-"flight_number":"AI101",
-
-"departure_airport":"DEL",
-
-"arrival_airport":"BOM",
-
-"status":"Delayed",
-
-"Aircraft":{
-"registration_number":"VT123",
-"model":"A320"
-}
-}
-]
-
-Flight.belongsTo(Aircraft,{
- foreignKey:"aircraft_id"
-});
-
-Aircraft.hasMany(Flight,{
- foreignKey:"aircraft_id"
-});
-
-import {
-Flight,
-Aircraft
-} from "@repo/shared-database";
-
-
-export const getDashboard = async()=>{
-
- const flights = await Flight.findAll({
-
- include:[
- {
- model:Aircraft,
- attributes:["registration_number","model"]
- }
- ],
-
- order:[
- ["departure_date","DESC"]
- ]
-
- });
-
- return flights;
 
 };
 
-import { Request,Response,NextFunction } from "express";
-import * as dashboardService from "../services/dashboard-service";
-
-
-export const getDashboard = async(
- req:Request,
- res:Response,
- next:NextFunction
-)=>{
-
- try{
-
- const data = await dashboardService.getDashboard();
 
  res.json(data);
 
@@ -443,3 +339,116 @@ deleteCrew
 export default router;
 
 ❤️😊
+
+
+
+
+
+async createDelayCategory(data) {
+  // 1. Validate required fields
+  if (!data.code || !data.name)
+    throw new Error("Code and Name are required");
+
+  // 2. Check uniqueness
+  const exists = await repo.findByCode(data.code);
+  if (exists)
+    throw new Error("Delay category code already exists");
+
+  // 3. Create category
+  return await repo.create(data);
+}
+
+
+async updateDelayCategory(id, data) {
+  const category = await repo.findById(id);
+  if (!category)
+    throw new Error("Category not found");
+
+  if (data.code && data.code !== category.code)
+    throw new Error("Code cannot be changed");
+
+  return await repo.update(id, data);
+}
+
+async deleteDelayCategory(id) {
+  const used = await repo.isUsedInOperationalEvents(id);
+  if (used)
+    throw new Error("Cannot delete category in use");
+
+  return await repo.delete(id);
+}
+
+
+async createOperationalEvent(flightId, data, userId) {
+
+  // 1. Check flight exists
+  const flight = await repo.findFlightById(flightId);
+  if (!flight)
+    throw new Error("Flight not found");
+
+  // 2. Validate event type
+  const validTypes = [
+    "delay",
+    "diversion",
+    "cancellation",
+    "equipment_change",
+    "gate_change",
+    "crew_change",
+    "medical",
+    "security"
+  ];
+
+  if (!validTypes.includes(data.event_type))
+    throw new Error("Invalid event type");
+
+  // 3. Delay-specific validation
+  if (data.event_type === "delay") {
+    if (!data.delay_category_id)
+      throw new Error("Delay category required");
+
+    if (!data.delay_minutes || data.delay_minutes <= 0)
+      throw new Error("Delay minutes must be positive");
+
+    // Validate delay category exists
+    const category = await delayCategoryRepo.findById(data.delay_category_id);
+    if (!category)
+      throw new Error("Invalid delay category");
+  }
+
+  // 4. Validate event_time
+  if (!data.event_time)
+    throw new Error("Event time required");
+
+  // 5. Create event
+  return await repo.create({
+    ...data,
+    flight_id: flightId,
+    reported_by: userId
+  });
+}
+
+
+async updateEvent(flightId, eventId, data) {
+  const event = await repo.findById(eventId);
+  if (!event)
+    throw new Error("Event not found");
+
+  if (event.resolved_at)
+    throw new Error("Cannot update resolved event");
+
+  return await repo.update(eventId, data);
+}
+
+
+async resolveEvent(eventId) {
+  const event = await repo.findById(eventId);
+  if (!event)
+    throw new Error("Event not found");
+
+  if (event.resolved_at)
+    throw new Error("Event already resolved");
+
+  return await repo.resolve(eventId, new Date());
+}
+
+
