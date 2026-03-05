@@ -1,399 +1,273 @@
-import { DataTypes, Model, Optional } from "sequelize";
-import { sequelize } from "../config/database";
+1️⃣ Sequelize Models
+models/Flight.ts
+Ts
+Copy code
+import { Model, DataTypes } from 'sequelize';
+import { sequelize } from '../db';
 
-interface FlightPerformanceAttributes {
-  id: string;
-  flight_id: string;
-  fuel_used_kg: number;
-  distance_km: number;
-  passengers_boarded: number;
-  seat_capacity: number;
-
-  fuel_efficiency: number;
-  load_factor_pct: number;
-  co2_emissions_kg: number;
-
-  created_at?: Date;
-  updated_at?: Date;
+export class Flight extends Model {
+  declare id: string;
+  declare flight_number: string;
+  declare status: string;
 }
 
-interface FlightPerformanceCreationAttributes
-  extends Optional<
-    FlightPerformanceAttributes,
-    "id" | "fuel_efficiency" | "load_factor_pct" | "co2_emissions_kg"
-  > {}
+Flight.init({
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  flight_number: { type: DataTypes.STRING, allowNull: false },
+  status: { type: DataTypes.STRING, allowNull: false, defaultValue: 'scheduled' },
+}, {
+  sequelize,
+  modelName: 'Flight',
+  tableName: 'flights',
+});
+models/Notification.ts
+Ts
+Copy code
+import { Model, DataTypes } from 'sequelize';
+import { sequelize } from '../db';
+import { Flight } from './Flight';
 
-export class FlightPerformance
-  extends Model<
-    FlightPerformanceAttributes,
-    FlightPerformanceCreationAttributes
-  >
-  implements FlightPerformanceAttributes
-{
-  public id!: string;
-  public flight_id!: string;
-  public fuel_used_kg!: number;
-  public distance_km!: number;
-  public passengers_boarded!: number;
-  public seat_capacity!: number;
-
-  public fuel_efficiency!: number;
-  public load_factor_pct!: number;
-  public co2_emissions_kg!: number;
-
-  public readonly created_at!: Date;
-  public readonly updated_at!: Date;
+export class Notification extends Model {
+  declare id: string;
+  declare flight_id: string;
+  declare message: string;
+  declare read: boolean;
 }
 
-FlightPerformance.init(
-  {
-    id: {
-      type: DataTypes.UUID,
-      defaultValue: DataTypes.UUIDV4,
-      primaryKey: true,
-    },
-    flight_id: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      unique: true, // One performance per flight
-    },
-    fuel_used_kg: {
-      type: DataTypes.FLOAT,
-      allowNull: false,
-    },
-    distance_km: {
-      type: DataTypes.FLOAT,
-      allowNull: false,
-    },
-    passengers_boarded: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    seat_capacity: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    fuel_efficiency: {
-      type: DataTypes.FLOAT,
-      allowNull: false,
-    },
-    load_factor_pct: {
-      type: DataTypes.FLOAT,
-      allowNull: false,
-    },
-    co2_emissions_kg: {
-      type: DataTypes.FLOAT,
-      allowNull: false,
-    },
-  },
-  {
-    sequelize,
-    tableName: "flight_performance",
-    underscored: true,
-  }
-);
-
-import { z } from "zod";
-
-export const createFlightPerformanceSchema = z.object({
-  flight_id: z.string().uuid(),
-
-  fuel_used_kg: z.number().positive(),
-  distance_km: z.number().positive(),
-
-  passengers_boarded: z.number().int().min(0),
-  seat_capacity: z.number().int().positive(),
+Notification.init({
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  flight_id: { type: DataTypes.UUID, allowNull: false },
+  message: { type: DataTypes.TEXT, allowNull: false },
+  read: { type: DataTypes.BOOLEAN, defaultValue: false },
+}, {
+  sequelize,
+  modelName: 'Notification',
+  tableName: 'notifications',
 });
 
-import { FlightPerformance } from "@shared/models/flightPerformance.model";
-import { Flight } from "@shared/models/flight.model";
+// Association
+Flight.hasMany(Notification, { foreignKey: 'flight_id' });
+Notification.belongsTo(Flight, { foreignKey: 'flight_id' });
+✅ This links notifications to a flight.
+2️⃣ RabbitMQ Setup
+worker/rabbitmq/connection.ts
+Ts
+Copy code
+import amqp, { Channel } from 'amqplib';
 
-export class FlightPerformanceRepository {
-  async findFlightById(id: string) {
-    return Flight.findByPk(id);
-  }
+let channel: Channel;
 
-  async findByFlightId(flightId: string) {
-    return FlightPerformance.findOne({ where: { flight_id: flightId } });
-  }
+export async function connectRabbitMQ(): Promise<Channel> {
+  if (channel) return channel;
+  const connection = await amqp.connect('amqp://guest:guest@rabbitmq:5672');
+  channel = await connection.createChannel();
+  return channel;
+}
 
-  async create(data: any) {
-    return FlightPerformance.create(data);
-  }
+export function getChannel(): Channel {
+  if (!channel) throw new Error('RabbitMQ not connected');
+  return channel;
+}
+worker/rabbitmq/publisher.ts
+Ts
+Copy code
+import { getChannel } from './connection';
 
-  async findAll() {
-    return FlightPerformance.findAll({
-      order: [["created_at", "DESC"]],
+export async function publishNotification(flightId: string, message: string) {
+  const channel = getChannel();
+  const queue = 'notifications';
+  await channel.assertQueue(queue, { durable: true });
+  channel.sendToQueue(queue, Buffer.from(JSON.stringify({ flightId, message })), { persistent: true });
+}
+worker/rabbitmq/consumer.ts
+Ts
+Copy code
+import { getChannel } from './connection';
+import { Notification } from '../../models/Notification';
+
+export async function consumeNotifications() {
+  const channel = getChannel();
+  const queue = 'notifications';
+  await channel.assertQueue(queue, { durable: true });
+
+  channel.consume(queue, async (msg) => {
+    if (!msg) return;
+    const data = JSON.parse(msg.content.toString());
+    console.log('Received notification:', data);
+
+    await Notification.create({
+      flight_id: data.flightId,
+      message: data.message,
     });
+
+    channel.ack(msg);
+  });
+}
+3️⃣ Worker Service Entry
+worker/index.ts
+Ts
+Copy code
+import { connectRabbitMQ } from './rabbitmq/connection';
+import { consumeNotifications } from './rabbitmq/consumer';
+import { sequelize } from '../db';
+
+async function startWorker() {
+  try {
+    await sequelize.authenticate();
+    console.log('DB connected');
+    await connectRabbitMQ();
+    console.log('RabbitMQ connected');
+    await consumeNotifications();
+    console.log('Worker consuming notifications...');
+  } catch (err) {
+    console.error(err);
   }
 }
 
-import { FlightPerformanceRepository } from "../repositories/flightPerformance.repository";
-import { ApiError } from "@shared/utils/apiError";
+startWorker();
+4️⃣ Notification Service
+services/notificationService.ts
+Ts
+Copy code
+import { Notification } from '../models/Notification';
 
-export class FlightPerformanceService {
-  private repository = new FlightPerformanceRepository();
-
-  async createPerformance(data: {
-    flight_id: string;
-    fuel_used_kg: number;
-    distance_km: number;
-    passengers_boarded: number;
-    seat_capacity: number;
-  }) {
-    const flight = await this.repository.findFlightById(data.flight_id);
-
-    if (!flight) {
-      throw new ApiError(404, "Flight not found");
-    }
-
-    if (flight.status !== "completed") {
-      throw new ApiError(
-        400,
-        "Performance can only be recorded for completed flights"
-      );
-    }
-
-    const existing = await this.repository.findByFlightId(data.flight_id);
-
-    if (existing) {
-      throw new ApiError(
-        409,
-        "Performance record already exists for this flight"
-      );
-    }
-
-    // AUTO CALCULATIONS
-
-    const fuel_efficiency =
-      data.fuel_used_kg / data.distance_km;
-
-    const load_factor_pct =
-      (data.passengers_boarded / data.seat_capacity) * 100;
-
-    const co2_emissions_kg =
-      data.fuel_used_kg * 3.16;
-
-    return this.repository.create({
-      ...data,
-      fuel_efficiency: Number(fuel_efficiency.toFixed(2)),
-      load_factor_pct: Number(load_factor_pct.toFixed(2)),
-      co2_emissions_kg: Number(co2_emissions_kg.toFixed(2)),
-    });
-  }
-
-  async getAllPerformance() {
-    return this.repository.findAll();
-  }
+export async function getAllNotifications() {
+  return Notification.findAll({ order: [['createdAt', 'DESC']] });
 }
 
-import { Request, Response, NextFunction } from "express";
-import { FlightPerformanceService } from "../services/flightPerformance.service";
-import { createFlightPerformanceSchema } from "../validations/flightPerformance.validation";
-
-const service = new FlightPerformanceService();
-
-export class FlightPerformanceController {
-  async create(req: Request, res: Response, next: NextFunction) {
-    try {
-      const validated = createFlightPerformanceSchema.parse(req.body);
-
-      const performance = await service.createPerformance(validated);
-
-      return res.status(201).json({
-        success: true,
-        message: "Flight performance recorded successfully",
-        data: performance,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async getAll(req: Request, res: Response, next: NextFunction) {
-    try {
-      const data = await service.getAllPerformance();
-
-      return res.status(200).json({
-        success: true,
-        data,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+export async function getUnreadCount() {
+  return Notification.count({ where: { read: false } });
 }
 
-import { Router } from "express";
-import { FlightPerformanceController } from "../controllers/flightPerformance.controller";
-import { authenticate } from "@shared/middlewares/authenticate";
-import { authorize } from "@shared/middlewares/authorize";
+export async function markAsRead(id: string) {
+  return Notification.update({ read: true }, { where: { id } });
+}
+5️⃣ Notification Controller
+controllers/notificationController.ts
+Ts
+Copy code
+import { Request, Response } from 'express';
+import * as notificationService from '../services/notificationService';
+
+export async function getNotifications(req: Request, res: Response) {
+  const notifications = await notificationService.getAllNotifications();
+  res.json(notifications);
+}
+
+export async function markNotificationRead(req: Request, res: Response) {
+  const { id } = req.params;
+  await notificationService.markAsRead(id);
+  res.json({ success: true });
+}
+6️⃣ Notification Routes
+routes/notificationRoutes.ts
+Ts
+Copy code
+import { Router } from 'express';
+import { getNotifications, markNotificationRead } from '../controllers/notificationController';
 
 const router = Router();
-const controller = new FlightPerformanceController();
 
-router.use(authenticate);
-
-router.post(
-  "/",
-  authorize(["admin", "operation"]),
-  controller.create.bind(controller)
-);
-
-router.get(
-  "/",
-  authorize(["admin", "analyst", "manager"]),
-  controller.getAll.bind(controller)
-);
+router.get('/', getNotifications);
+router.patch('/:id/read', markNotificationRead);
 
 export default router;
-
-✅ PART 1 — PAGINATION + FILTERING (Flight Performance)
-📁 Update Validation
-validations/performanceQuery.validation.ts
+In your main app.ts / server.ts:
 Ts
 Copy code
-import { z } from "zod";
-
-export const performanceQuerySchema = z.object({
-  page: z.string().optional(),
-  limit: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-});
-📁 Update Repository
-repositories/flightPerformance.repository.ts
+import notificationRoutes from './routes/notificationRoutes';
+app.use('/notifications', notificationRoutes);
+7️⃣ Publishing Notifications in Operational Service
+Example in operationService.ts:
 Ts
 Copy code
-import { Op } from "sequelize";
-import { FlightPerformance } from "@shared/models/flightPerformance.model";
+import { publishNotification } from '../worker/rabbitmq/publisher';
+import * as repo from '../repositories/operation-repository';
 
-export class FlightPerformanceRepository {
+if (data.event_type === 'delay') {
+  await repo.updateFlightStatus(data.flight_id, 'delayed');
+  await publishNotification(data.flight_id, `Flight delayed by ${data.delay_minutes} minutes`);
+}
 
-  async findAllWithPagination({
-    page,
-    limit,
-    startDate,
-    endDate,
-  }: {
-    page: number;
-    limit: number;
-    startDate?: string;
-    endDate?: string;
-  }) {
+if (data.event_type === 'cancellation') {
+  await repo.updateFlightStatus(data.flight_id, 'cancelled');
+  await publishNotification(data.flight_id, 'Flight cancelled');
+}
 
-    const offset = (page - 1) * limit;
+notification-repo.ts:
+Ts
+Copy code
+import { Notification } from '@/models'; // Sequelize model
 
-    const whereClause: any = {};
+export async function createNotification(flightId: string, message: string) {
+  return Notification.create({ flight_id: flightId, message });
+}
+Step 8: Integrate with Operational Event service
+In operationService.ts:
+Ts
+Copy code
+import { publishNotification } from '@/worker-service/rabbitmq/publisher';
 
-    if (startDate && endDate) {
-      whereClause.created_at = {
-        [Op.between]: [new Date(startDate), new Date(endDate)],
-      };
-    }
+if (data.event_type === 'delay') {
+  await repo.updateFlightStatus(data.flight_id, 'delayed');
+  await publishNotification(data.flight_id, `Flight delayed by ${data.delay_minutes} mins`);
+}
 
-    const { rows, count } = await FlightPerformance.findAndCountAll({
-      where: whereClause,
-      offset,
-      limit,
-      order: [["created_at", "DESC"]],
-    });
+if (data.event_type === 'cancellation') {
+  await repo.updateFlightStatus(data.flight_id, 'cancelled');
+  await publishNotification(data.flight_id, 'Flight cancelled');
+}
+✅ This keeps your status update synchronous, but notifications are handled asynchronously in the queue.
+Step 9: Frontend (React) Notification Bell
+Create NotificationBell.tsx using shadcn components:
+Tsx
+Copy code
+import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { api } from '@/api/api';
 
-    return { rows, count };
+interface Notification {
+  id: string;
+  message: string;
+  read: boolean;
+}
+
+export function NotificationBell() {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
+
+  async function fetchNotifications() {
+    const res = await api<{ data: Notification[] }>('/notifications/today');
+    setNotifications(res.data);
   }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button>🔔 {notifications.filter(n => !n.read).length}</Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        {notifications.map(n => (
+          <DropdownMenuItem key={n.id}>{n.message}</DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
-📁 Update Service
-services/flightPerformance.service.ts
-Ts
+Add this bell icon to your dashboard.
+✅ Step 10: Run everything
+Start all containers:
+Bash
 Copy code
-async getAllPerformance(query: any) {
-
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 10;
-
-  const { rows, count } =
-    await this.repository.findAllWithPagination({
-      page,
-      limit,
-      startDate: query.startDate,
-      endDate: query.endDate,
-    });
-
-  return {
-    data: rows,
-    pagination: {
-      totalRecords: count,
-      totalPages: Math.ceil(count / limit),
-      currentPage: page,
-      pageSize: limit,
-    },
-  };
-}
-📁 Update Controller
-Ts
+docker compose up -d
+Start worker service:
+Bash
 Copy code
-import { performanceQuerySchema } from "../validations/performanceQuery.validation";
-
-async getAll(req: Request, res: Response, next: NextFunction) {
-  try {
-    const validatedQuery = performanceQuerySchema.parse(req.query);
-
-    const result = await service.getAllPerformance(validatedQuery);
-
-    return res.status(200).json({
-      success: true,
-      ...result,
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-✅ PART 2 — PAGINATION FOR OPERATIONAL EVENTS
-📁 Repository Update
-repositories/operationalEvent.repository.ts
-Ts
-Copy code
-async findEventsByFlightWithPagination(
-  flightId: string,
-  page: number,
-  limit: number
-) {
-  const offset = (page - 1) * limit;
-
-  const { rows, count } =
-    await OperationalEvent.findAndCountAll({
-      where: { flight_id: flightId },
-      offset,
-      limit,
-      order: [["created_at", "DESC"]],
-    });
-
-  return { rows, count };
-}
-📁 Service Update
-Ts
-Copy code
-async getEventsByFlight(flightId: string, query: any) {
-
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 10;
-
-  const { rows, count } =
-    await this.repository.findEventsByFlightWithPagination(
-      flightId,
-      page,
-      limit
-    );
-
-  return {
-    data: rows,
-    pagination: {
-      totalRecords: count,
-      totalPages: Math.ceil(count / limit),
-      currentPage: page,
-      pageSize: limit,
-    },
-  };
-}
-
-
+cd apps/worker-service
+ts-node index.ts
+Test:
+Add an operational event → status updates → notification appears in DB → frontend bell shows it.
